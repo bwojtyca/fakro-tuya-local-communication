@@ -52,6 +52,34 @@ QOS = 1
 MOVE_COMMAND_TTL_SECONDS = 30
 CLOSED_POSITION_THRESHOLD = 2
 
+# Map of Tuya data points to their MQTT sub-topics. The device sometimes returns
+# a PARTIAL status (only some DPs), so we publish only the keys actually present
+# and skip the rest — otherwise missing keys would flap entities to "unknown"/OFF
+# in Home Assistant (a partial poll is not a real state change).
+DP_TOPICS = [
+    ("2", "control"),
+    ("7", "position"),
+    ("19", "speed"),
+    ("101", "flagserwis"),
+    ("102", "type"),
+    ("106", "motor"),
+    ("111", "noposition"),
+    ("120", "errors"),
+    ("121", "pozikon"),
+    ("122", "spare"),
+    ("123", "spare2"),
+    ("124", "spare3"),
+    ("140", "rain_state"),
+    ("141", "rain_use"),
+    ("179", "load_close"),
+    ("180", "load_open"),
+    ("181", "current"),
+    ("182", "voltage"),
+    ("184", "cnt_up"),
+    ("185", "cnt_down"),
+    ("186", "cnt_work"),
+]
+
 fast_poll_counter = 0
 lock = threading.Lock()
 wake_event = threading.Event()
@@ -230,34 +258,10 @@ def refresh():
 
     pub("raw", dps)
 
-    pub("control", dps.get("2", "unknown"))
-    pub("position", dps.get("7", "unknown"))
-    pub("speed", dps.get("19", "unknown"))
-
-    pub("flagserwis", dps.get("101", "unknown"))
-    pub("type", dps.get("102", "unknown"))
-
-    pub("motor", dps.get("106", "unknown"))
-    pub("noposition", dps.get("111", "unknown"))
-
-    pub("errors", dps.get("120", "unknown"))
-    pub("pozikon", dps.get("121", "unknown"))
-    pub("spare", dps.get("122", "unknown"))
-    pub("spare2", dps.get("123", "unknown"))
-    pub("spare3", dps.get("124", "unknown"))
-
-    pub("rain_state", dps.get("140", False))
-    pub("rain_use", dps.get("141", False))
-
-    pub("load_close", dps.get("179", "unknown"))
-    pub("load_open", dps.get("180", "unknown"))
-
-    pub("current", dps.get("181", "unknown"))
-    pub("voltage", dps.get("182", "unknown"))
-
-    pub("cnt_up", dps.get("184", "unknown"))
-    pub("cnt_down", dps.get("185", "unknown"))
-    pub("cnt_work", dps.get("186", "unknown"))
+    # Publish only the data points actually present in this response.
+    for dp, topic in DP_TOPICS:
+        if dp in dps:
+            pub(topic, dps[dp])
 
     publish_cover_state(dps)
 
