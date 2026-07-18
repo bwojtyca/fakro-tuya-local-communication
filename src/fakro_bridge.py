@@ -222,9 +222,12 @@ def publish_cover_state(dps):
         and now - last_move_command["ts"] < MOVE_COMMAND_TTL_SECONDS
     )
     position_changed = previous_position is not None and position != previous_position
-    moving = motor_running or position_changed
 
-    if moving:
+    # The motor DP is the sole authority on whether the window is moving RIGHT
+    # NOW. A position change while the motor is already stopped means the
+    # movement finished between polls (e.g. triggered from the Tuya app), so we
+    # report the resting state instead of a stale "opening"/"closing".
+    if motor_running:
         if recent_command:
             state = last_move_command["direction"]
         elif position_changed:

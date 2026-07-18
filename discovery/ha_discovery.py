@@ -10,9 +10,10 @@ Two ways to use it:
   * Run this file directly (or `deploy/deploy.sh --discovery`) to force a
     one-off republish using a standalone MQTT connection.
 
-Entities for data points the device never reports over local polling
-(101, 121, 122-124, 182, 184-186) are published as `enabled_by_default: false`
-so they exist but stay hidden unless the device ever starts reporting them.
+Data points the device never reports over local polling (101, 121, 122-124,
+182, 184-186) have NO entities — they are listed in REMOVED_ENTITIES so their
+discovery configs and orphaned state topics get cleared. If the device ever
+starts reporting them, add the entities back and drop them from the removal list.
 """
 
 import json
@@ -51,7 +52,25 @@ AVAILABILITY = [{"topic": f"{BASE}/availability"}]
 # Discovery configs for entities that no longer exist. An empty retained payload
 # on a .../config topic deletes the entity, so it does not linger in HA.
 REMOVED_ENTITIES = [
-    ("sensor", "fakro_window_raw_dps"),  # replaced by cover json_attributes
+    ("sensor", "fakro_window_raw_dps"),        # replaced by cover json_attributes
+    # Data points the device never reports over local polling -> no entity.
+    ("sensor", "fakro_window_voltage"),        # DP182
+    ("binary_sensor", "fakro_window_service_flag"),  # DP101
+    ("sensor", "fakro_window_pozikon"),        # DP121
+    ("sensor", "fakro_window_count_up"),       # DP184
+    ("sensor", "fakro_window_count_down"),     # DP185
+    ("sensor", "fakro_window_count_work"),     # DP186
+    ("sensor", "fakro_window_spare"),          # DP122
+    ("sensor", "fakro_window_spare2"),         # DP123
+    ("sensor", "fakro_window_spare3"),         # DP124
+]
+
+# Orphaned retained STATE topics to clear (earlier code published "unknown" here
+# every poll for the never-reported DPs above).
+REMOVED_STATE_TOPICS = [
+    "flagserwis", "voltage", "pozikon",
+    "spare", "spare2", "spare3",
+    "cnt_up", "cnt_down", "cnt_work",
 ]
 
 # Set by publish_discovery() for the duration of a publish run.
@@ -152,6 +171,10 @@ def publish_discovery(client):
     # Remove entities that no longer exist (clear orphaned retained configs).
     for domain, object_id in REMOVED_ENTITIES:
         client.publish(f"homeassistant/{domain}/{object_id}/config", "", qos=1, retain=True)
+
+    # Clear orphaned retained state topics for those removed entities.
+    for topic in REMOVED_STATE_TOPICS:
+        client.publish(f"{BASE}/{topic}", "", qos=1, retain=True)
 
     # --- Cover: position + motion state (opening/closing/stopped) ---
     # Raw DPS are exposed as attributes of the cover (json_attributes_topic)
@@ -290,93 +313,11 @@ def publish_discovery(client):
         category="diagnostic",
     )
 
-    # --- Optional: data points the device does NOT report over local polling ---
-    # Kept for completeness but disabled by default (would stay "unknown").
-    _sensor(
-        "fakro_window_voltage",
-        "Napięcie / DP182",
-        f"{BASE}/voltage",
-        icon="mdi:sine-wave",
-        unit="raw",
-        state_class="measurement",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _binary_sensor(
-        "fakro_window_service_flag",
-        "Flaga serwisowa",
-        f"{BASE}/flagserwis",
-        icon="mdi:wrench",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_pozikon",
-        "Pozikon / DP121",
-        f"{BASE}/pozikon",
-        icon="mdi:counter",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_count_up",
-        "Licznik otwarć",
-        f"{BASE}/cnt_up",
-        icon="mdi:counter",
-        state_class="total_increasing",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_count_down",
-        "Licznik zamknięć",
-        f"{BASE}/cnt_down",
-        icon="mdi:counter",
-        state_class="total_increasing",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_count_work",
-        "Licznik pracy",
-        f"{BASE}/cnt_work",
-        icon="mdi:counter",
-        state_class="total_increasing",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_spare",
-        "Spare / DP122",
-        f"{BASE}/spare",
-        icon="mdi:dots-horizontal",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_spare2",
-        "Spare 2 / DP123",
-        f"{BASE}/spare2",
-        icon="mdi:dots-horizontal",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
-
-    _sensor(
-        "fakro_window_spare3",
-        "Spare 3 / DP124",
-        f"{BASE}/spare3",
-        icon="mdi:dots-horizontal",
-        category="diagnostic",
-        enabled_by_default=False,
-    )
+    # Note: data points 101, 121, 122-124, 182, 184-186 are never reported by
+    # the device over local polling, so they have no entities here. They are
+    # cleared via REMOVED_ENTITIES / REMOVED_STATE_TOPICS above. If the device
+    # ever starts reporting them, add the entities back and drop them from the
+    # removal lists.
 
 
 def _main():
