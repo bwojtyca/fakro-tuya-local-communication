@@ -1,0 +1,8 @@
+[Unit]
+Description=Fakro Bridge Healthcheck
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fakro-bridge
+EnvironmentFile=/opt/fakro-bridge/.env
+ExecStart=/opt/tuya-env/bin/python /opt/fakro-bridge/src/fakro_healthcheck.py

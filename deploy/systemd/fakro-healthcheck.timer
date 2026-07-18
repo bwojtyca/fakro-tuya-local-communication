@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Fakro Bridge Healthcheck every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=fakro-healthcheck.service
+
+[Install]
+WantedBy=timers.target

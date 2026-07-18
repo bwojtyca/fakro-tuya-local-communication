@@ -1,0 +1,21 @@
+# Sekrety i konfiguracja lokalna — NIGDY nie commitować
+.env
+.env.*
+!.env.example
+
+# Logi
+*.log
+*.log.*
+fakro_trace.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# System / edytory
+.DS_Store
+.idea/
+.vscode/

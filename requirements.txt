@@ -1,0 +1,4 @@
+# Bezpośrednie zależności mostu Fakro-Tuya-MQTT.
+# Wersje zgodne ze środowiskiem produkcyjnym na kontenerze (Python 3.13).
+tinytuya==1.18.0
+paho-mqtt==2.1.0
