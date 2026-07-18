@@ -1,9 +1,9 @@
-"""Narzędzie deweloperskie: uproszczony most tylko do odczytu.
+"""Developer tool: simplified read-only bridge.
 
-Wcześniejsza, jednowątkowa wersja mostu — odpytuje urządzenie co 10 sekund i
-publikuje podzbiór wartości na MQTT, bez obsługi komend i bez izolacji operacji
-w osobnym procesie. Zachowane do szybkiej diagnozy; w produkcji używaj
-`src/fakro_bridge.py`.
+An earlier, single-threaded version of the bridge — polls the device every 10
+seconds and publishes a subset of values to MQTT, without command handling and
+without isolating operations in a separate process. Kept for quick diagnostics;
+use `src/fakro_bridge.py` in production.
 """
 
 import json

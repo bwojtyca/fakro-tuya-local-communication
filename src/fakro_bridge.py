@@ -1,13 +1,13 @@
-"""Most Fakro-Tuya <-> MQTT.
+"""Fakro-Tuya <-> MQTT bridge.
 
-Łączy się lokalnie z oknem dachowym Fakro sterowanym przez Tuya (protokół
-lokalny, bez chmury), cyklicznie odpytuje jego status i publikuje wartości na
-brokerze MQTT. Przyjmuje też komendy z MQTT (otwórz/zamknij/stop, pozycja,
-prędkość, ochrona przed deszczem) i przekazuje je do urządzenia.
+Connects locally to a Fakro roof window controlled via Tuya (local protocol,
+no cloud), polls its status periodically and publishes the values to an MQTT
+broker. It also accepts commands from MQTT (open/close/stop, position, speed,
+rain protection) and forwards them to the device.
 
-Każda operacja Tuya jest wykonywana w osobnym procesie z twardym timeoutem —
-biblioteka tinytuya potrafi się zawiesić na gnieździe, a to izoluje takie
-przypadki i chroni pętlę główną przed zablokowaniem.
+Each Tuya operation runs in a separate process with a hard timeout — the
+tinytuya library can hang on the socket, and this isolates such cases and keeps
+the main loop from blocking.
 """
 
 import json

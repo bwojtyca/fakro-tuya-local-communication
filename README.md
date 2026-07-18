@@ -1,102 +1,102 @@
 # Fakro Tuya Local Communication
 
-Most (bridge) do **lokalnej** komunikacji z elektrycznym oknem dachowym Fakro
-sterowanym przez Tuya — bez chmury. Odpytuje urządzenie protokołem lokalnym
-Tuya (`tinytuya`, wersja 3.3), publikuje jego stan na MQTT i przyjmuje komendy,
-dzięki czemu okno pojawia się w Home Assistancie jako natywne urządzenie
-(przez MQTT Discovery).
+A bridge for **local** communication with an electric Fakro roof window
+controlled via Tuya — no cloud. It polls the device using the Tuya local
+protocol (`tinytuya`, version 3.3), publishes its state to MQTT and accepts
+commands, so the window shows up in Home Assistant as a native device (via MQTT
+Discovery).
 
 ```
-Okno Fakro (Tuya, lokalnie) ──tinytuya──► fakro_bridge ──MQTT──► Home Assistant
-                                              ▲                        │
-                                              └──── komendy ◄──────────┘
+Fakro window (Tuya, local) ──tinytuya──► fakro_bridge ──MQTT──► Home Assistant
+                                             ▲                        │
+                                             └──── commands ◄─────────┘
 ```
 
-## Funkcje
+## Features
 
-- **Sterowanie:** otwórz / zamknij / stop, pozycja `0–100%`, prędkość (`soft`/`normal`/`quick`), ochrona przed deszczem.
-- **Telemetria:** ~25 wartości (pozycja, deszcz, prąd, napięcie, liczniki, błędy, flagi serwisowe...).
-- **Odporność:** każda operacja Tuya w osobnym procesie z twardym timeoutem; automatyczny restart usługi, gdy zniknie heartbeat (healthcheck co minutę).
-- **Integracja z HA:** automatyczne tworzenie encji przez MQTT Discovery.
+- **Control:** open / close / stop, position `0–100%`, speed (`soft`/`normal`/`quick`), rain protection.
+- **Telemetry:** ~25 values (position, rain, current, voltage, counters, errors, service flags...).
+- **Resilience:** every Tuya operation runs in a separate process with a hard timeout; the service is restarted automatically when the heartbeat disappears (healthcheck every minute).
+- **HA integration:** entities are created automatically via MQTT Discovery.
 
-Pełna mapa punktów danych urządzenia: [`docs/dps-map.md`](docs/dps-map.md).
+Full data-point map of the device: [`docs/dps-map.md`](docs/dps-map.md).
 
-## Struktura repozytorium
+## Repository layout
 
 ```
-fakro_config.py              # wspólna konfiguracja (czyta zmienne środowiskowe / .env)
-.env.example                 # wzór konfiguracji — skopiuj do .env i uzupełnij
-requirements.txt             # zależności (tinytuya, paho-mqtt)
+fakro_config.py              # shared configuration (reads environment variables / .env)
+.env.example                 # configuration template — copy to .env and fill in
+requirements.txt             # dependencies (tinytuya, paho-mqtt)
 src/
-  fakro_bridge.py            # główny serwis: Tuya <-> MQTT (+ komendy)
-  fakro_healthcheck.py       # restart usługi przy braku heartbeatu
+  fakro_bridge.py            # main service: Tuya <-> MQTT (+ commands)
+  fakro_healthcheck.py       # restarts the service when the heartbeat is missing
 discovery/
-  ha_discovery.py            # publikacja MQTT Discovery do Home Assistanta
-tools/                       # skrypty deweloperskie/diagnostyczne
-  test_connection.py         # szybki test połączenia z urządzeniem
-  read_status.py             # odczyt surowego statusu + odświeżenie DPS
-  bridge_readonly.py         # uproszczony most tylko do odczytu (starszy)
-  ha_discovery_extra.py      # wcześniejsza wersja discovery (referencja)
+  ha_discovery.py            # publishes MQTT Discovery to Home Assistant
+tools/                       # developer / diagnostic scripts
+  test_connection.py         # quick device connection test
+  read_status.py             # read raw status + refresh DPS
+  bridge_readonly.py         # simplified read-only bridge (older)
+  ha_discovery_extra.py      # earlier version of discovery (reference)
 deploy/
-  deploy.sh                  # deploy z Maca do kontenera LXC po SSH
-  systemd/                   # jednostki systemd (usługa + healthcheck + timer)
+  deploy.sh                  # deploy from a Mac to the LXC container over SSH
+  systemd/                   # systemd units (service + healthcheck + timer)
 docs/
-  dps-map.md                 # mapa punktów danych Tuya (DPS)
+  dps-map.md                 # Tuya data-point (DPS) map
 ```
 
-## Konfiguracja
+## Configuration
 
-Wszystkie sekrety (klucz lokalny Tuya, hasło MQTT itd.) pochodzą ze zmiennych
-środowiskowych — **nic wrażliwego nie jest zapisane w kodzie ani w repo**.
+All secrets (Tuya local key, MQTT password, etc.) come from environment
+variables — **nothing sensitive is stored in the code or the repository**.
 
 ```bash
 cp .env.example .env
-# uzupełnij .env prawdziwymi wartościami (patrz komentarze w pliku)
+# fill in .env with the real values (see the comments in the file)
 ```
 
-Plik `.env` jest ignorowany przez git. Przy uruchomieniu przez systemd jest
-wczytywany jako `EnvironmentFile`; przy uruchomieniu ręcznym `fakro_config.py`
-sam go wczytuje z katalogu projektu.
+The `.env` file is git-ignored. When run under systemd it is loaded as an
+`EnvironmentFile`; when run manually, `fakro_config.py` loads it itself from the
+project directory.
 
-## Uruchomienie lokalne (do testów)
+## Running locally (for testing)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python tools/test_connection.py     # sprawdź połączenie z oknem
-python src/fakro_bridge.py          # uruchom most (Ctrl+C, aby zatrzymać)
+python tools/test_connection.py     # check the connection to the window
+python src/fakro_bridge.py          # run the bridge (Ctrl+C to stop)
 ```
 
-## Deploy na kontener LXC (Proxmox)
+## Deploy to the LXC container (Proxmox)
 
-Deploy odbywa się z Maca po SSH — kopiuje kod i `.env`, instaluje zależności,
-konfiguruje systemd i restartuje usługę. Docelowa lokalizacja na kontenerze:
-`/opt/fakro-bridge`, środowisko Python: `/opt/tuya-env`.
+The deploy runs from a Mac over SSH — it copies the code and `.env`, installs
+dependencies, configures systemd and restarts the service. Target location on
+the container: `/opt/fakro-bridge`, Python environment: `/opt/tuya-env`.
 
 ```bash
-./deploy/deploy.sh              # deploy + restart usługi
-./deploy/deploy.sh --discovery  # dodatkowo opublikuj encje do Home Assistanta
+./deploy/deploy.sh              # deploy + restart the service
+./deploy/deploy.sh --discovery  # also publish the entities to Home Assistant
 ```
 
-Parametry deployu (host kontenera, katalogi) czytane są z pliku `.env`
-(klucze `FAKRO_DEPLOY_HOST`, `FAKRO_DEPLOY_DIR`, `FAKRO_VENV_DIR`) i można je
-doraźnie nadpisać zmienną środowiskową:
+Deploy parameters (container host, directories) are read from the `.env` file
+(`FAKRO_DEPLOY_HOST`, `FAKRO_DEPLOY_DIR`, `FAKRO_VENV_DIR`) and can be overridden
+ad hoc with an environment variable:
 
 ```bash
 FAKRO_DEPLOY_HOST=root@192.168.x.x ./deploy/deploy.sh
 ```
 
-### Przydatne komendy na kontenerze
+### Useful commands on the container
 
 ```bash
-systemctl status fakro-bridge          # stan usługi
-journalctl -u fakro-bridge -f          # logi na żywo
-systemctl list-timers fakro-healthcheck # następny healthcheck
+systemctl status fakro-bridge           # service state
+tail -f /opt/fakro-bridge/logs/fakro_bridge.log   # live logs
+systemctl list-timers fakro-healthcheck # next healthcheck
 ```
 
-## Zależności
+## Dependencies
 
 - Python 3.13
-- [`tinytuya`](https://github.com/jasonacox/tinytuya) — lokalny protokół Tuya
-- [`paho-mqtt`](https://github.com/eclipse/paho.mqtt.python) — klient MQTT
+- [`tinytuya`](https://github.com/jasonacox/tinytuya) — Tuya local protocol
+- [`paho-mqtt`](https://github.com/eclipse/paho.mqtt.python) — MQTT client

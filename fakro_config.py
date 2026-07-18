@@ -1,14 +1,14 @@
-"""Centralna konfiguracja mostu Fakro-Tuya-MQTT.
+"""Central configuration for the Fakro-Tuya-MQTT bridge.
 
-Wszystkie sekrety i parametry sieciowe pochodzą ze zmiennych środowiskowych,
-dzięki czemu nic wrażliwego nie trafia do repozytorium.
+All secrets and network parameters come from environment variables, so nothing
+sensitive is ever stored in the repository.
 
-Przy uruchomieniu lokalnym (bez systemd) wartości można trzymać w pliku `.env`
-w katalogu głównym projektu. Jest on wczytywany automatycznie, ale NIE nadpisuje
-zmiennych już obecnych w środowisku — dzięki temu `EnvironmentFile` w systemd ma
-pierwszeństwo nad plikiem `.env`.
+When running locally (without systemd) the values can be kept in a `.env` file
+in the project root. It is loaded automatically but does NOT override variables
+already present in the environment — this way systemd's `EnvironmentFile` takes
+precedence over the `.env` file.
 
-Wzór wszystkich wymaganych zmiennych znajdziesz w `.env.example`.
+See `.env.example` for the full list of required variables.
 """
 
 import os
@@ -17,7 +17,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def _load_dotenv():
-    """Wczytuje `.env` z katalogu projektu bez nadpisywania istniejących zmiennych."""
+    """Load `.env` from the project root without overriding existing variables."""
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if not os.path.isfile(env_path):
         return
@@ -34,29 +34,29 @@ def _load_dotenv():
 
 
 def _required(name):
-    """Zwraca zmienną środowiskową albo rzuca czytelnym błędem, gdy jej brak."""
+    """Return an environment variable or raise a clear error when it is missing."""
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(
-            f"Brak wymaganej zmiennej środowiskowej: {name}. "
-            f"Ustaw ją w środowisku lub w pliku .env (patrz .env.example)."
+            f"Missing required environment variable: {name}. "
+            f"Set it in the environment or in a .env file (see .env.example)."
         )
     return value
 
 
 _load_dotenv()
 
-# --- Urządzenie Tuya (komunikacja lokalna) ---
+# --- Tuya device (local communication) ---
 DEVICE_ID = _required("FAKRO_DEVICE_ID")
 LOCAL_KEY = _required("FAKRO_LOCAL_KEY")
 DEVICE_IP = _required("FAKRO_DEVICE_IP")
 TUYA_VERSION = float(os.environ.get("FAKRO_TUYA_VERSION", "3.3"))
 
-# --- Broker MQTT ---
+# --- MQTT broker ---
 MQTT_HOST = _required("FAKRO_MQTT_HOST")
 MQTT_PORT = int(os.environ.get("FAKRO_MQTT_PORT", "1883"))
 MQTT_USER = _required("FAKRO_MQTT_USER")
 MQTT_PASS = _required("FAKRO_MQTT_PASS")
 
-# --- Topiki MQTT ---
+# --- MQTT topics ---
 BASE_TOPIC = os.environ.get("FAKRO_BASE_TOPIC", "fakro/window")

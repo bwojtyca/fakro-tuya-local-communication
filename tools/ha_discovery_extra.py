@@ -1,9 +1,9 @@
-"""Narzędzie deweloperskie: wcześniejsza wersja MQTT Discovery.
+"""Developer tool: earlier version of MQTT Discovery.
 
-Starszy, częściowo dublujący się zestaw encji diagnostycznych z anglojęzycznymi
-nazwami. Zachowane jako referencja z etapu reverse-engineeringu. Wersją docelową
-jest `discovery/ha_discovery.py` — nie uruchamiaj obu naraz, bo utworzą
-nakładające się encje w Home Assistancie.
+An older, partially overlapping set of diagnostic entities with English names.
+Kept as a reference from the reverse-engineering stage. The canonical version is
+`discovery/ha_discovery.py` — do not run both at once, as they would create
+overlapping entities in Home Assistant.
 """
 
 import json

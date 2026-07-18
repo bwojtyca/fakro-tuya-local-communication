@@ -1,7 +1,7 @@
-"""Narzędzie deweloperskie: odczyt surowego statusu urządzenia Tuya.
+"""Developer tool: read the raw status of the Tuya device.
 
-Wypisuje pełny status oraz próbuje odświeżyć znane punkty danych (DPS).
-Przydatne przy diagnozie i ponownym odkrywaniu mapy DP urządzenia.
+Prints the full status and tries to refresh the known data points (DPS).
+Useful for diagnostics and for re-discovering the device's DP map.
 """
 
 import json

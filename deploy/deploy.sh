@@ -1,38 +1,38 @@
 #!/usr/bin/env bash
 #
-# Deploy mostu Fakro-Tuya z Maca do kontenera LXC na Proxmoxie.
+# Deploy the Fakro-Tuya bridge from a Mac to the LXC container on Proxmox.
 #
-# Co robi:
-#   1. Wysyła kod (tar po SSH) do katalogu aplikacji na kontenerze.
-#   2. Wgrywa lokalny plik .env (sekrety) — osobno, bez trzymania go w repo.
-#   3. Zapewnia środowisko Python (venv) i instaluje zależności.
-#   4. Instaluje/aktualizuje jednostki systemd i restartuje usługę.
+# What it does:
+#   1. Sends the code (tar over SSH) to the application dir on the container.
+#   2. Uploads the local .env file (secrets) separately, without keeping it in the repo.
+#   3. Ensures a Python environment (venv) and installs dependencies.
+#   4. Installs/updates the systemd units and restarts the service.
 #
-# Konfiguracja pochodzi z pliku .env (klucze FAKRO_DEPLOY_*), a można ją nadpisać
-# zmiennymi środowiskowymi o tych samych nazwach:
-#   FAKRO_DEPLOY_HOST   host SSH kontenera              (np. root@192.168.x.x)
-#   FAKRO_DEPLOY_DIR    katalog aplikacji na kontenerze (/opt/fakro-bridge)
-#   FAKRO_VENV_DIR      katalog wirtualnego środowiska  (/opt/tuya-env)
+# Configuration comes from the .env file (FAKRO_DEPLOY_* keys) and can be
+# overridden with environment variables of the same names:
+#   FAKRO_DEPLOY_HOST   SSH host of the container       (e.g. root@192.168.x.x)
+#   FAKRO_DEPLOY_DIR    application dir on the container (/opt/fakro-bridge)
+#   FAKRO_VENV_DIR      virtual environment dir          (/opt/tuya-env)
 #
-# Użycie:
-#   ./deploy/deploy.sh              # deploy + restart usługi
-#   ./deploy/deploy.sh --discovery  # dodatkowo publikuje MQTT Discovery do HA
+# Usage:
+#   ./deploy/deploy.sh              # deploy + restart the service
+#   ./deploy/deploy.sh --discovery  # also publish MQTT Discovery to HA
 
 set -euo pipefail
 
-# Katalog główny repo (o poziom wyżej niż ten skrypt)
+# Repo root (one level above this script)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
-# Odczyt pojedynczego klucza z .env BEZ sourcowania pliku.
-# (nie używamy `. .env`, bo wartości takie jak LOCAL_KEY zawierają znaki
-#  specjalne — backtick itp. — które wywracają parser basha)
+# Read a single key from .env WITHOUT sourcing the file.
+# (we don't use `. .env`, because values like LOCAL_KEY contain special
+#  characters — backtick etc. — that break the bash parser)
 read_env() {
     [ -f "$REPO_DIR/.env" ] || return 0
     grep -E "^$1=" "$REPO_DIR/.env" | tail -n1 | cut -d= -f2- | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
 }
 
-# Priorytet: zmienna środowiskowa > wartość z .env > wartość domyślna
+# Priority: environment variable > value from .env > default value
 DEPLOY_HOST="${FAKRO_DEPLOY_HOST:-$(read_env FAKRO_DEPLOY_HOST)}"
 APP_DIR="${FAKRO_DEPLOY_DIR:-$(read_env FAKRO_DEPLOY_DIR)}"
 VENV_DIR="${FAKRO_VENV_DIR:-$(read_env FAKRO_VENV_DIR)}"
@@ -40,7 +40,7 @@ APP_DIR="${APP_DIR:-/opt/fakro-bridge}"
 VENV_DIR="${VENV_DIR:-/opt/tuya-env}"
 
 if [[ -z "$DEPLOY_HOST" ]]; then
-    echo "BŁĄD: brak FAKRO_DEPLOY_HOST (ustaw w .env lub w środowisku)." >&2
+    echo "ERROR: FAKRO_DEPLOY_HOST is not set (set it in .env or the environment)." >&2
     exit 1
 fi
 
@@ -50,19 +50,19 @@ if [[ "${1:-}" == "--discovery" ]]; then
 fi
 
 echo "==> Repo:      $REPO_DIR"
-echo "==> Cel:       ${DEPLOY_HOST}:${APP_DIR}"
+echo "==> Target:    ${DEPLOY_HOST}:${APP_DIR}"
 echo "==> Venv:      $VENV_DIR"
 
-# 0. Sprawdź, czy mamy lokalny .env z sekretami
+# 0. Make sure we have a local .env with secrets
 if [[ ! -f "$REPO_DIR/.env" ]]; then
-    echo "BŁĄD: brak pliku .env w katalogu repo." >&2
-    echo "       Skopiuj .env.example do .env i uzupełnij wartości." >&2
+    echo "ERROR: no .env file in the repo directory." >&2
+    echo "       Copy .env.example to .env and fill in the values." >&2
     exit 1
 fi
 
-# 1. Wyślij kod (bez .git, cache, logów i .env — .env leci osobno w kroku 2)
-#    Używamy tar po SSH zamiast rsync, bo minimalny kontener LXC nie ma rsync.
-echo "==> [1/5] Synchronizacja kodu (tar po SSH)..."
+# 1. Send the code (excluding .git, cache, logs and .env — .env goes separately in step 2)
+#    We use tar over SSH instead of rsync, because the minimal LXC container has no rsync.
+echo "==> [1/5] Syncing code (tar over SSH)..."
 ssh "$DEPLOY_HOST" "mkdir -p ${APP_DIR}"
 tar -cz \
     --exclude '.git' \
@@ -75,25 +75,25 @@ tar -cz \
     -C "$REPO_DIR" . \
     | ssh "$DEPLOY_HOST" "tar -xz -C ${APP_DIR}"
 
-# 2. Wgraj sekrety (.env) z bezpiecznymi uprawnieniami
-echo "==> [2/5] Wgrywanie .env..."
+# 2. Upload secrets (.env) with safe permissions
+echo "==> [2/5] Uploading .env..."
 scp -q "$REPO_DIR/.env" "${DEPLOY_HOST}:${APP_DIR}/.env"
 ssh "$DEPLOY_HOST" "chmod 600 ${APP_DIR}/.env"
 
-# 3. Zapewnij venv i zależności
-echo "==> [3/5] Środowisko Python i zależności..."
+# 3. Ensure venv and dependencies
+echo "==> [3/5] Python environment and dependencies..."
 ssh "$DEPLOY_HOST" "bash -s" <<EOF
 set -e
 if [ ! -x "${VENV_DIR}/bin/python" ]; then
-    echo "    tworzę venv w ${VENV_DIR}"
+    echo "    creating venv at ${VENV_DIR}"
     python3 -m venv "${VENV_DIR}"
 fi
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet -r "${APP_DIR}/requirements.txt"
 EOF
 
-# 4. Zainstaluj/odśwież jednostki systemd
-echo "==> [4/5] Instalacja jednostek systemd..."
+# 4. Install/refresh the systemd units
+echo "==> [4/5] Installing systemd units..."
 ssh "$DEPLOY_HOST" "bash -s" <<EOF
 set -e
 mkdir -p ${APP_DIR}/logs
@@ -106,16 +106,16 @@ systemctl enable --now fakro-healthcheck.timer
 systemctl restart fakro-bridge.service
 EOF
 
-# 5. (opcjonalnie) opublikuj MQTT Discovery
+# 5. (optional) publish MQTT Discovery
 if [[ "$RUN_DISCOVERY" == true ]]; then
-    echo "==> [5/5] Publikacja MQTT Discovery..."
+    echo "==> [5/5] Publishing MQTT Discovery..."
     ssh "$DEPLOY_HOST" "cd ${APP_DIR} && ${VENV_DIR}/bin/python discovery/ha_discovery.py"
 else
-    echo "==> [5/5] Pomijam MQTT Discovery (uruchom z --discovery, aby opublikować)."
+    echo "==> [5/5] Skipping MQTT Discovery (run with --discovery to publish)."
 fi
 
 echo
-echo "==> Gotowe. Status usługi:"
+echo "==> Done. Service status:"
 ssh "$DEPLOY_HOST" "systemctl --no-pager --lines=0 status fakro-bridge.service" || true
 echo
-echo "Podgląd logów na żywo:  ssh ${DEPLOY_HOST} 'journalctl -u fakro-bridge -f'"
+echo "Live logs:  ssh ${DEPLOY_HOST} 'tail -f ${APP_DIR}/logs/fakro_bridge.log'"

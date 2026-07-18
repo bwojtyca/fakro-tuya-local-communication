@@ -1,9 +1,9 @@
-"""Publikacja MQTT Discovery dla Home Assistanta.
+"""Publish MQTT Discovery for Home Assistant.
 
-Jednorazowo wysyła na broker retenowane konfiguracje encji (cover, sensory,
-binary_sensory, switch, select), dzięki czemu Home Assistant automatycznie
-tworzy urządzenie „Okno dachowe Fakro" i wszystkie jego encje. Uruchom po
-zmianie definicji encji lub po świeżej instalacji HA.
+Sends retained entity configs (cover, sensors, binary_sensors, switch, select)
+to the broker once, so Home Assistant automatically creates the "Okno dachowe
+Fakro" device and all its entities. Run it after changing entity definitions or
+after a fresh HA installation.
 """
 
 import json

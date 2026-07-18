@@ -1,8 +1,9 @@
-"""Healthcheck mostu Fakro-Tuya.
+"""Healthcheck for the Fakro-Tuya bridge.
 
-Uruchamiany cyklicznie przez timer systemd. Sprawdza, czy na MQTT pojawił się
-świeży `heartbeat` publikowany przez serwis mostu. Jeśli heartbeat jest starszy
-niż `MAX_AGE_SECONDS` (albo w ogóle go brak) — restartuje usługę `fakro-bridge`.
+Runs periodically via a systemd timer. Checks whether a fresh `heartbeat`
+published by the bridge service has appeared on MQTT. If the heartbeat is older
+than `MAX_AGE_SECONDS` (or missing entirely), it restarts the `fakro-bridge`
+service.
 """
 
 import os

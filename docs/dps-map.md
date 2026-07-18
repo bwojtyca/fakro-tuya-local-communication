@@ -1,50 +1,50 @@
-# Mapa punktów danych Tuya (DPS) — okno dachowe Fakro
+# Tuya data-point map (DPS) — Fakro roof window
 
-Odtworzona metodą reverse-engineeringu z komunikacji lokalnej urządzenia
-(protokół Tuya 3.3). Kolumna „Topic MQTT" odnosi się do bazy `fakro/window`
-(zmienna `FAKRO_BASE_TOPIC`).
+Reverse-engineered from the device's local communication (Tuya protocol 3.3).
+The "MQTT topic" column is relative to the `fakro/window` base
+(the `FAKRO_BASE_TOPIC` variable).
 
-## Sterowanie (zapisywalne)
+## Control (writable)
 
-| DP  | Topic MQTT           | Zapis (komenda)           | Wartości                          | Opis |
-|-----|----------------------|---------------------------|-----------------------------------|------|
-| 2   | `control`            | `fakro/window/set`        | `open` / `close` / `stop`         | Podstawowa komenda okna |
-| 7   | `position`           | `fakro/window/position/set` | `0`–`100` (%)                   | Pozycja docelowa / bieżąca |
-| 19  | `speed`              | `fakro/window/speed/set`  | `soft` / `normal` / `quick`       | Prędkość ruchu |
-| 141 | `rain_use`           | `fakro/window/rain_use/set` | `ON` / `OFF`                    | Włączenie ochrony przed deszczem |
+| DP  | MQTT topic           | Write (command)             | Values                            | Description |
+|-----|----------------------|-----------------------------|-----------------------------------|-------------|
+| 2   | `control`            | `fakro/window/set`          | `open` / `close` / `stop`         | Basic window command |
+| 7   | `position`           | `fakro/window/position/set` | `0`–`100` (%)                     | Target / current position |
+| 19  | `speed`              | `fakro/window/speed/set`    | `soft` / `normal` / `quick`       | Movement speed |
+| 141 | `rain_use`           | `fakro/window/rain_use/set` | `ON` / `OFF`                      | Enable rain protection |
 
-## Odczyt — stan i czujniki
+## Read — state and sensors
 
-| DP  | Topic MQTT     | Opis |
-|-----|----------------|------|
-| 140 | `rain_state`   | Wykryto deszcz (bool) |
-| 106 | `motor`        | Stan silnika |
-| 111 | `noposition`   | Brak pozycji / kalibracja |
-| 120 | `errors`       | Kod błędu |
-| 181 | `current`      | Pobór prądu (surowa wartość) |
-| 182 | `voltage`      | Napięcie (surowa wartość) |
-| 179 | `load_close`   | Próg obciążenia przy zamykaniu |
-| 180 | `load_open`    | Próg obciążenia przy otwieraniu |
+| DP  | MQTT topic     | Description |
+|-----|----------------|-------------|
+| 140 | `rain_state`   | Rain detected (bool) |
+| 106 | `motor`        | Motor state |
+| 111 | `noposition`   | No position / calibrating |
+| 120 | `errors`       | Error code |
+| 181 | `current`      | Current draw (raw value) |
+| 182 | `voltage`      | Voltage (raw value) |
+| 179 | `load_close`   | Load threshold when closing |
+| 180 | `load_open`    | Load threshold when opening |
 
-## Odczyt — diagnostyka i liczniki
+## Read — diagnostics and counters
 
-| DP  | Topic MQTT   | Opis |
-|-----|--------------|------|
-| 101 | `flagserwis` | Flaga serwisowa |
-| 102 | `type`       | Typ urządzenia |
-| 121 | `pozikon`    | Pozikon (licznik) |
-| 122 | `spare`      | Rezerwa / nieznane |
-| 123 | `spare2`     | Rezerwa / nieznane |
-| 124 | `spare3`     | Rezerwa / nieznane |
-| 184 | `cnt_up`     | Licznik otwarć |
-| 185 | `cnt_down`   | Licznik zamknięć |
-| 186 | `cnt_work`   | Licznik pracy silnika |
+| DP  | MQTT topic   | Description |
+|-----|--------------|-------------|
+| 101 | `flagserwis` | Service flag |
+| 102 | `type`       | Device type |
+| 121 | `pozikon`    | Pozikon (counter) |
+| 122 | `spare`      | Spare / unknown |
+| 123 | `spare2`     | Spare / unknown |
+| 124 | `spare3`     | Spare / unknown |
+| 184 | `cnt_up`     | Open counter |
+| 185 | `cnt_down`   | Close counter |
+| 186 | `cnt_work`   | Motor work counter |
 
-## Topiki pomocnicze (publikowane przez most)
+## Helper topics (published by the bridge)
 
-| Topic MQTT      | Opis |
-|-----------------|------|
-| `raw`           | Pełny surowy słownik `dps` (JSON) |
+| MQTT topic      | Description |
+|-----------------|-------------|
+| `raw`           | Full raw `dps` dictionary (JSON) |
 | `availability`  | `online` / `offline` |
-| `heartbeat`     | Znacznik czasu (unix) ostatniego odświeżenia — używany przez healthcheck |
-| `heartbeat_iso` | Znacznik czasu ostatniego odświeżenia (czytelny) |
+| `heartbeat`     | Unix timestamp of the last refresh — used by the healthcheck |
+| `heartbeat_iso` | Human-readable timestamp of the last refresh |

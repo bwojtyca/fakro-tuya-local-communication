@@ -1,7 +1,7 @@
-"""Narzędzie deweloperskie: minimalny test połączenia z urządzeniem Tuya.
+"""Developer tool: minimal connection test for the Tuya device.
 
-Nawiązuje lokalne połączenie i wypisuje pojedynczy status — najszybszy sposób
-sprawdzenia, czy DEVICE_IP / LOCAL_KEY / DEVICE_ID są poprawne.
+Opens a local connection and prints a single status — the fastest way to check
+whether DEVICE_IP / LOCAL_KEY / DEVICE_ID are correct.
 """
 
 import os
