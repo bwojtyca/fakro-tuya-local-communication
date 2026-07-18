@@ -58,6 +58,7 @@ wake_event = threading.Event()
 previous_position = None
 last_move_command = None   # {"direction": "opening"|"closing", "ts": float}
 last_cover_state = None
+was_online = False          # tracks availability transitions (for last_seen)
 
 
 def log(*args):
@@ -213,10 +214,13 @@ def publish_cover_state(dps):
 
 
 def refresh():
+    global was_online
+
     ok, result = run_tuya("status")
 
     if not ok:
         pub("availability", "offline")
+        was_online = False
         log("REFRESH ERROR:", result)
         return False
 
@@ -255,11 +259,15 @@ def refresh():
 
     publish_cover_state(dps)
 
+    # Publish the "online since" timestamp only on the offline->online
+    # transition, so the HA timestamp sensor does not churn on every poll.
+    if not was_online:
+        pub("last_seen", time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()))
+        was_online = True
+
     pub("availability", "online")
     pub("heartbeat", int(time.time()))
     pub("heartbeat_iso", time.strftime("%Y-%m-%d %H:%M:%S"))
-    # ISO 8601 UTC timestamp for a Home Assistant `timestamp` sensor (last seen)
-    pub("last_seen", time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()))
 
     log("REFRESH:", json.dumps(dps, ensure_ascii=False))
 

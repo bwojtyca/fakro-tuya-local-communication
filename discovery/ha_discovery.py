@@ -202,9 +202,9 @@ select(
 
 sensor(
     "fakro_window_last_seen",
-    "Ostatnio widziano",
+    "Połączono od",
     f"{BASE}/last_seen",
-    icon="mdi:clock-check-outline",
+    icon="mdi:lan-connect",
     device_class="timestamp",
     category="diagnostic",
     expire_after=None,
