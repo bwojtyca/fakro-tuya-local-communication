@@ -60,3 +60,6 @@ MQTT_PASS = _required("FAKRO_MQTT_PASS")
 
 # --- MQTT topics ---
 BASE_TOPIC = os.environ.get("FAKRO_BASE_TOPIC", "fakro/window")
+
+# --- Bridge metadata (not a secret; reported to HA as device sw_version) ---
+BRIDGE_VERSION = "2.0"

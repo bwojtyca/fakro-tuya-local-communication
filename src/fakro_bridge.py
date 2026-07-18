@@ -38,9 +38,26 @@ POLL_AFTER_COMMAND_SECONDS = 3
 FAST_POLLS_AFTER_COMMAND = 10
 TUYA_OPERATION_TIMEOUT = 12
 
+# MQTT quality of service: 1 = "at least once" (broker acks), so commands and
+# state are not silently lost during reconnects.
+QOS = 1
+
+# Cover motion state.
+# The motor DP (106) tells us THAT the motor runs, not the DIRECTION. We infer
+# direction from the last movement command: if it was issued less than
+# MOVE_COMMAND_TTL_SECONDS ago, we assume it is what drove the motor. As a
+# fallback (e.g. the window moved from a remote/rain trigger) we use the sign of
+# the position change between polls.
+MOVE_COMMAND_TTL_SECONDS = 30
+CLOSED_POSITION_THRESHOLD = 2
+
 fast_poll_counter = 0
 lock = threading.Lock()
 wake_event = threading.Event()
+
+previous_position = None
+last_move_command = None   # {"direction": "opening"|"closing", "ts": float}
+last_cover_state = None
 
 
 def log(*args):
@@ -135,8 +152,64 @@ def pub(topic, value, retain=True):
     client.publish(
         f"{BASE_TOPIC}/{topic}",
         payload,
+        qos=QOS,
         retain=retain
     )
+
+
+def note_move_command(direction):
+    """Record the direction of the last movement command (for cover state)."""
+    global last_move_command
+    last_move_command = {"direction": direction, "ts": time.time()}
+
+
+def clear_move_command():
+    """Forget the last movement command (e.g. after an explicit stop)."""
+    global last_move_command
+    last_move_command = None
+
+
+def publish_cover_state(dps):
+    """Derive and publish the cover motion state (open/closed/opening/closing).
+
+    Direction while moving comes from the last movement command when it is
+    recent enough; otherwise from the position delta between polls.
+    """
+    global previous_position, last_cover_state
+
+    try:
+        position = int(dps.get("7"))
+    except (TypeError, ValueError):
+        return  # no position reported — leave the state untouched
+
+    motor = dps.get("106", 0)
+    motor_running = str(motor) not in ("0", "", "None", "False")
+
+    now = time.time()
+    recent_command = (
+        last_move_command is not None
+        and now - last_move_command["ts"] < MOVE_COMMAND_TTL_SECONDS
+    )
+    position_changed = previous_position is not None and position != previous_position
+    moving = motor_running or position_changed
+
+    if moving:
+        if recent_command:
+            state = last_move_command["direction"]
+        elif position_changed:
+            state = "opening" if position > previous_position else "closing"
+        elif last_cover_state in ("opening", "closing"):
+            state = last_cover_state
+        else:
+            state = "opening"
+    elif position <= CLOSED_POSITION_THRESHOLD:
+        state = "closed"
+    else:
+        state = "open"
+
+    pub("state", state)
+    last_cover_state = state
+    previous_position = position
 
 
 def refresh():
@@ -180,9 +253,13 @@ def refresh():
     pub("cnt_down", dps.get("185", "unknown"))
     pub("cnt_work", dps.get("186", "unknown"))
 
+    publish_cover_state(dps)
+
     pub("availability", "online")
     pub("heartbeat", int(time.time()))
     pub("heartbeat_iso", time.strftime("%Y-%m-%d %H:%M:%S"))
+    # ISO 8601 UTC timestamp for a Home Assistant `timestamp` sensor (last seen)
+    pub("last_seen", time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()))
 
     log("REFRESH:", json.dumps(dps, ensure_ascii=False))
 
@@ -218,10 +295,10 @@ def set_dp(dp, value, label):
 def on_connect(client, userdata, flags, reason_code, properties):
     log("MQTT connected:", reason_code)
 
-    client.subscribe(f"{BASE_TOPIC}/set")
-    client.subscribe(f"{BASE_TOPIC}/position/set")
-    client.subscribe(f"{BASE_TOPIC}/speed/set")
-    client.subscribe(f"{BASE_TOPIC}/rain_use/set")
+    client.subscribe(f"{BASE_TOPIC}/set", qos=QOS)
+    client.subscribe(f"{BASE_TOPIC}/position/set", qos=QOS)
+    client.subscribe(f"{BASE_TOPIC}/speed/set", qos=QOS)
+    client.subscribe(f"{BASE_TOPIC}/rain_use/set", qos=QOS)
 
     pub("availability", "online")
 
@@ -241,6 +318,13 @@ def on_message(client, userdata, msg):
     if topic == f"{BASE_TOPIC}/set":
 
         if payload in ["open", "close", "stop"]:
+            if payload == "open":
+                note_move_command("opening")
+            elif payload == "close":
+                note_move_command("closing")
+            else:
+                clear_move_command()
+
             set_dp(2, payload, "SET DP2")
 
         else:
@@ -251,6 +335,11 @@ def on_message(client, userdata, msg):
         try:
             position = int(payload)
             position = max(0, min(100, position))
+
+            if previous_position is not None:
+                note_move_command(
+                    "opening" if position > previous_position else "closing"
+                )
 
             set_dp(7, position, "SET DP7")
 
