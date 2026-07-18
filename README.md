@@ -1,10 +1,11 @@
 # Fakro Tuya Local Communication
 
 A bridge for **local** communication with an electric Fakro roof window
-controlled via Tuya — no cloud. It polls the device using the Tuya local
-protocol (`tinytuya`, version 3.3), publishes its state to MQTT and accepts
-commands, so the window shows up in Home Assistant as a native device (via MQTT
-Discovery).
+controlled via Tuya — no cloud. It keeps a persistent local connection to the
+device (`tinytuya`, protocol 3.3), reacts to the device's real-time pushes and
+publishes state to MQTT, and accepts commands — so the window shows up in Home
+Assistant as a native device (via MQTT Discovery) and reflects changes within
+about a second, including movements triggered outside HA (Tuya app, remote).
 
 ```
 Fakro window (Tuya, local) ──tinytuya──► fakro_bridge ──MQTT──► Home Assistant
@@ -15,9 +16,11 @@ Fakro window (Tuya, local) ──tinytuya──► fakro_bridge ──MQTT──
 ## Features
 
 - **Control:** open / close / stop, position `0–100%`, speed (`soft`/`normal`/`quick`), rain protection.
-- **Telemetry:** ~25 values (position, rain, current, voltage, counters, errors, service flags...).
-- **Resilience:** every Tuya operation runs in a separate process with a hard timeout; the service is restarted automatically when the heartbeat disappears (healthcheck every minute).
-- **HA integration:** entities are created automatically via MQTT Discovery.
+- **Real-time:** the device pushes data-point changes over a persistent connection; state (position, motor, commands) is reflected in HA within ~1s, including changes made outside HA.
+- **Cover motion state:** reports `opening` / `closing` / `open` / `closed`, with direction inferred from the movement command, the position change and the physical extremes.
+- **Telemetry:** position, rain, current, load thresholds, last command, motor state, errors, etc.
+- **Resilience:** keepalive + automatic reconnect on socket errors; a slow safety poll catches missed pushes; an MQTT Last Will marks the device offline if the bridge dies; a systemd healthcheck restarts the service if the heartbeat goes stale.
+- **HA integration:** entities are created automatically via MQTT Discovery (published by the bridge on connect).
 
 Full data-point map of the device: [`docs/dps-map.md`](docs/dps-map.md).
 

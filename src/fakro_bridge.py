@@ -1,21 +1,29 @@
-"""Fakro-Tuya <-> MQTT bridge.
+"""Fakro-Tuya <-> MQTT bridge (persistent / push-based).
 
-Connects locally to a Fakro roof window controlled via Tuya (local protocol,
-no cloud), polls its status periodically and publishes the values to an MQTT
-broker. It also accepts commands from MQTT (open/close/stop, position, speed,
-rain protection) and forwards them to the device.
+Holds a single persistent local connection to the Fakro roof window (Tuya local
+protocol, no cloud) and reacts to the device's real-time pushes: whenever a data
+point changes, it is published to MQTT immediately. Commands from MQTT
+(open/close/stop, position, speed, rain protection) are queued and sent over the
+same persistent socket — Tuya allows only one local connection at a time.
 
-Each Tuya operation runs in a separate process with a hard timeout — the
-tinytuya library can hang on the socket, and this isolates such cases and keeps
-the main loop from blocking.
+Robustness:
+  * a keepalive heartbeat keeps the socket alive;
+  * on any socket error the connection is torn down and re-established;
+  * a slow safety poll re-reads the full status periodically, in case a push was
+    missed;
+  * an MQTT Last Will marks the device offline if the bridge process dies;
+  * an external healthcheck (systemd timer) restarts the service if the MQTT
+    heartbeat goes stale — the ultimate backstop.
+
+Because pushes are partial (e.g. just ``{"106": 1}``), we keep a merged view of
+all data points and compute the cover motion state from that.
 """
 
 import json
 import os
+import queue
 import sys
 import time
-import threading
-import multiprocessing as mp
 
 import tinytuya
 import paho.mqtt.client as mqtt
@@ -34,28 +42,27 @@ from fakro_config import (
 )
 from discovery.ha_discovery import publish_discovery
 
-POLL_IDLE_SECONDS = 60
-POLL_AFTER_COMMAND_SECONDS = 3
-FAST_POLLS_AFTER_COMMAND = 10
-TUYA_OPERATION_TIMEOUT = 12
-
 # MQTT quality of service: 1 = "at least once" (broker acks), so commands and
 # state are not silently lost during reconnects.
 QOS = 1
 
-# Cover motion state.
-# The motor DP (106) tells us THAT the motor runs, not the DIRECTION. We infer
-# direction from the last movement command: if it was issued less than
-# MOVE_COMMAND_TTL_SECONDS ago, we assume it is what drove the motor. As a
-# fallback (e.g. the window moved from a remote/rain trigger) we use the sign of
-# the position change between polls.
-MOVE_COMMAND_TTL_SECONDS = 30
+# Persistent connection timing.
+RECEIVE_TIMEOUT = 1      # seconds to block in receive() before looping
+HEARTBEAT_SECONDS = 10   # keepalive interval to hold the socket open
+SAFETY_POLL_SECONDS = 60 # periodic full status re-read (catches missed pushes)
+RECONNECT_DELAY = 5      # wait before reconnecting after a socket error
+
+# Cover motion state. The motor DP (106) is the authority on whether the window
+# is moving now. Direction is resolved from (in order): the position change, the
+# physical extremes (at 0 it can only open, at 100 only close), and finally a
+# recent MQTT movement command. The command is only trusted for a short window
+# and is cleared when movement ends, so it never leaks onto an unrelated move
+# triggered from the Tuya app or a remote.
+MOVE_COMMAND_TTL_SECONDS = 60
 CLOSED_POSITION_THRESHOLD = 2
 
-# Map of Tuya data points to their MQTT sub-topics. The device sometimes returns
-# a PARTIAL status (only some DPs), so we publish only the keys actually present
-# and skip the rest — otherwise missing keys would flap entities to "unknown"/OFF
-# in Home Assistant (a partial poll is not a real state change).
+# Map of Tuya data points to their MQTT sub-topics. Responses (and especially
+# pushes) can be partial, so we publish only the keys actually present.
 DP_TOPICS = [
     ("2", "control"),
     ("7", "position"),
@@ -80,15 +87,14 @@ DP_TOPICS = [
     ("186", "cnt_work"),
 ]
 
-fast_poll_counter = 0
-lock = threading.Lock()
-wake_event = threading.Event()
+command_queue = queue.Queue()
 
+current_dps = {}            # merged view of all known data points
 previous_position = None
-last_move_command = None   # {"direction": "opening"|"closing", "ts": float}
+last_move_command = None    # {"direction": "opening"|"closing", "ts": float}
 last_cover_state = None
-was_online = False          # tracks availability transitions (for last_seen)
-discovery_published = False # publish HA discovery once per process
+was_online = False           # tracks availability transitions (for last_seen)
+discovery_published = False  # publish HA discovery once per process
 
 
 def log(*args):
@@ -99,93 +105,23 @@ def log(*args):
     )
 
 
-def make_device():
-    d = tinytuya.Device(
-        dev_id=DEVICE_ID,
-        address=DEVICE_IP,
-        local_key=LOCAL_KEY,
-        version=TUYA_VERSION
-    )
-
-    d.set_socketPersistent(False)
-    d.set_socketTimeout(5)
-
-    return d
-
-
-def tuya_worker(queue, operation, dp=None, value=None):
-    try:
-        d = make_device()
-
-        if operation == "status":
-            result = d.status()
-
-        elif operation == "set":
-            result = d.set_value(dp, value)
-
-        else:
-            result = {
-                "error": f"unknown operation {operation}"
-            }
-
-        queue.put(("ok", result))
-
-    except Exception as e:
-        queue.put(("error", repr(e)))
-
-
-def run_tuya(operation, dp=None, value=None, timeout=TUYA_OPERATION_TIMEOUT):
-    queue = mp.Queue()
-
-    process = mp.Process(
-        target=tuya_worker,
-        args=(queue, operation, dp, value)
-    )
-
-    process.start()
-    process.join(timeout)
-
-    if process.is_alive():
-        process.terminate()
-        process.join(2)
-
-        if process.is_alive():
-            process.kill()
-            process.join()
-
-        return False, f"TIMEOUT after {timeout}s"
-
-    if queue.empty():
-        return False, "NO RESULT"
-
-    status, result = queue.get()
-
-    if status == "ok":
-        return True, result
-
-    return False, result
-
+# --- MQTT ---
 
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.username_pw_set(MQTT_USER, MQTT_PASS)
+# Last Will: if the bridge dies, the broker marks the device offline.
+client.will_set(f"{BASE_TOPIC}/availability", "offline", qos=QOS, retain=True)
 
 
 def pub(topic, value, retain=True):
     if isinstance(value, (dict, list)):
         payload = json.dumps(value, ensure_ascii=False)
-
     elif isinstance(value, bool):
         payload = "ON" if value else "OFF"
-
     else:
         payload = str(value)
 
-    client.publish(
-        f"{BASE_TOPIC}/{topic}",
-        payload,
-        qos=QOS,
-        retain=retain
-    )
+    client.publish(f"{BASE_TOPIC}/{topic}", payload, qos=QOS, retain=retain)
 
 
 def note_move_command(direction):
@@ -200,20 +136,21 @@ def clear_move_command():
     last_move_command = None
 
 
-def publish_cover_state(dps):
-    """Derive and publish the cover motion state (open/closed/opening/closing).
+def publish_cover_state():
+    """Derive and publish the cover motion state from the merged data points.
 
-    Direction while moving comes from the last movement command when it is
-    recent enough; otherwise from the position delta between polls.
+    The motor DP is the sole authority on whether the window is moving now. A
+    position change while the motor is already stopped means the movement
+    finished, so we report the resting state instead of a stale opening/closing.
     """
     global previous_position, last_cover_state
 
     try:
-        position = int(dps.get("7"))
+        position = int(current_dps.get("7"))
     except (TypeError, ValueError):
-        return  # no position reported — leave the state untouched
+        return  # no position known yet — leave the state untouched
 
-    motor = dps.get("106", 0)
+    motor = current_dps.get("106", 0)
     motor_running = str(motor) not in ("0", "", "None", "False")
 
     now = time.time()
@@ -223,54 +160,57 @@ def publish_cover_state(dps):
     )
     position_changed = previous_position is not None and position != previous_position
 
-    # The motor DP is the sole authority on whether the window is moving RIGHT
-    # NOW. A position change while the motor is already stopped means the
-    # movement finished between polls (e.g. triggered from the Tuya app), so we
-    # report the resting state instead of a stale "opening"/"closing".
     if motor_running:
-        if recent_command:
-            state = last_move_command["direction"]
-        elif position_changed:
+        if position_changed:
             state = "opening" if position > previous_position else "closing"
+        elif position <= 0:
+            # At fully closed it can only open — unless the motor is just
+            # braking at the end of a close (transient DP 106 == 2), in which
+            # case keep "closing" so it doesn't flicker to "opening".
+            state = "closing" if last_cover_state == "closing" else "opening"
+        elif position >= 100:
+            state = "opening" if last_cover_state == "opening" else "closing"
+        elif recent_command:
+            state = last_move_command["direction"]
         elif last_cover_state in ("opening", "closing"):
             state = last_cover_state
         else:
             state = "opening"
-    elif position <= CLOSED_POSITION_THRESHOLD:
-        state = "closed"
     else:
-        state = "open"
+        # Movement just ended -> a queued MQTT command no longer applies, so it
+        # cannot leak onto a later move triggered outside HA.
+        if last_cover_state in ("opening", "closing"):
+            clear_move_command()
+        state = "closed" if position <= CLOSED_POSITION_THRESHOLD else "open"
 
     pub("state", state)
     last_cover_state = state
     previous_position = position
 
 
-def refresh():
-    global was_online
+def publish_dps(dps):
+    """Merge a (possibly partial) dps dict into the state and publish changes."""
+    if not dps:
+        return
 
-    ok, result = run_tuya("status")
+    current_dps.update(dps)
 
-    if not ok:
-        pub("availability", "offline")
-        was_online = False
-        log("REFRESH ERROR:", result)
-        return False
+    pub("raw", current_dps)
 
-    dps = result.get("dps", {})
-
-    pub("raw", dps)
-
-    # Publish only the data points actually present in this response.
+    # Publish only the data points that arrived in this update.
     for dp, topic in DP_TOPICS:
         if dp in dps:
             pub(topic, dps[dp])
 
-    publish_cover_state(dps)
+    publish_cover_state()
 
-    # Publish the "online since" timestamp only on the offline->online
-    # transition, so the HA timestamp sensor does not churn on every poll.
+
+def publish_alive():
+    """Mark the device online and refresh heartbeat / last_seen."""
+    global was_online
+
     if not was_online:
+        # ISO 8601 UTC timestamp for the HA "connected since" timestamp sensor.
         pub("last_seen", time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()))
         was_online = True
 
@@ -278,36 +218,14 @@ def refresh():
     pub("heartbeat", int(time.time()))
     pub("heartbeat_iso", time.strftime("%Y-%m-%d %H:%M:%S"))
 
-    log("REFRESH:", json.dumps(dps, ensure_ascii=False))
 
-    return True
-
-
-def mark_fast_poll():
-    global fast_poll_counter
-
-    with lock:
-        fast_poll_counter = FAST_POLLS_AFTER_COMMAND
-
-    wake_event.set()
+def go_offline():
+    global was_online
+    was_online = False
+    pub("availability", "offline")
 
 
-def set_dp(dp, value, label):
-    ok, result = run_tuya(
-        "set",
-        dp=dp,
-        value=value
-    )
-
-    if ok:
-        log(label, "RESULT:", result)
-        pub("availability", "online")
-        mark_fast_poll()
-
-    else:
-        log(label, "ERROR:", result)
-        pub("availability", "offline")
-
+# --- MQTT callbacks ---
 
 def on_connect(client, userdata, flags, reason_code, properties):
     global discovery_published
@@ -319,8 +237,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.subscribe(f"{BASE_TOPIC}/speed/set", qos=QOS)
     client.subscribe(f"{BASE_TOPIC}/rain_use/set", qos=QOS)
 
-    # Publish HA discovery once, so entities always match the running code.
-    # Wrapped so a discovery error can never take the bridge down.
+    # Publish HA discovery once; guarded so it can never take the bridge down.
     if not discovery_published:
         try:
             publish_discovery(client)
@@ -328,10 +245,6 @@ def on_connect(client, userdata, flags, reason_code, properties):
             log("MQTT discovery published")
         except Exception as e:
             log("Discovery publish failed:", repr(e))
-
-    pub("availability", "online")
-
-    mark_fast_poll()
 
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
@@ -345,7 +258,6 @@ def on_message(client, userdata, msg):
     log("COMMAND:", topic, payload)
 
     if topic == f"{BASE_TOPIC}/set":
-
         if payload in ["open", "close", "stop"]:
             if payload == "open":
                 note_move_command("opening")
@@ -353,79 +265,162 @@ def on_message(client, userdata, msg):
                 note_move_command("closing")
             else:
                 clear_move_command()
-
-            set_dp(2, payload, "SET DP2")
-
+            command_queue.put((2, payload, "SET DP2"))
         else:
             log("IGNORED invalid cover command:", payload)
 
     elif topic == f"{BASE_TOPIC}/position/set":
-
         try:
-            position = int(payload)
-            position = max(0, min(100, position))
-
+            position = max(0, min(100, int(payload)))
             if previous_position is not None:
                 note_move_command(
                     "opening" if position > previous_position else "closing"
                 )
-
-            set_dp(7, position, "SET DP7")
-
+            command_queue.put((7, position, "SET DP7"))
         except ValueError:
             log("IGNORED invalid position:", payload)
 
     elif topic == f"{BASE_TOPIC}/speed/set":
-
         if payload in ["soft", "normal", "quick"]:
-            set_dp(19, payload, "SET DP19")
-
+            command_queue.put((19, payload, "SET DP19"))
         else:
             log("IGNORED invalid speed:", payload)
 
     elif topic == f"{BASE_TOPIC}/rain_use/set":
-
         if payload in ["ON", "true", "1"]:
-            set_dp(141, True, "SET DP141")
-
+            command_queue.put((141, True, "SET DP141"))
         elif payload in ["OFF", "false", "0"]:
-            set_dp(141, False, "SET DP141")
-
+            command_queue.put((141, False, "SET DP141"))
         else:
             log("IGNORED invalid rain_use:", payload)
 
+
+# --- Tuya persistent connection ---
+
+def make_device():
+    d = tinytuya.Device(
+        dev_id=DEVICE_ID,
+        address=DEVICE_IP,
+        local_key=LOCAL_KEY,
+        version=TUYA_VERSION,
+    )
+    d.set_socketPersistent(True)
+    d.set_socketTimeout(RECEIVE_TIMEOUT)
+    return d
+
+
+def drain_commands(device):
+    """Send all queued commands over the persistent socket. Returns False on error."""
+    while True:
+        try:
+            dp, value, label = command_queue.get_nowait()
+        except queue.Empty:
+            return True
+
+        try:
+            result = device.set_value(dp, value)
+            log(label, "->", result)
+            if isinstance(result, dict) and "dps" in result:
+                publish_dps(result["dps"])
+        except Exception as e:
+            log(label, "ERROR:", repr(e))
+            # Put the command back so it is retried after reconnect.
+            command_queue.put((dp, value, label))
+            return False
+
+
+def tuya_loop():
+    device = None
+    last_heartbeat = 0.0
+    last_poll = 0.0
+
+    while True:
+        # (Re)connect if needed.
+        if device is None:
+            try:
+                device = make_device()
+                status = device.status()
+                if isinstance(status, dict) and "dps" in status:
+                    publish_dps(status["dps"])
+                    publish_alive()
+                    log("Tuya connected (persistent):", json.dumps(status["dps"], ensure_ascii=False))
+                else:
+                    log("Tuya connect: unexpected status:", status)
+                last_heartbeat = time.monotonic()
+                last_poll = time.monotonic()
+            except Exception as e:
+                log("Tuya connect ERROR:", repr(e))
+                go_offline()
+                device = None
+                time.sleep(RECONNECT_DELAY)
+                continue
+
+        # Send any pending commands first (responsive control).
+        if not drain_commands(device):
+            device = None
+            go_offline()
+            time.sleep(RECONNECT_DELAY)
+            continue
+
+        # Wait for a push (blocks up to RECEIVE_TIMEOUT).
+        try:
+            data = device.receive()
+        except Exception as e:
+            log("Tuya receive ERROR:", repr(e))
+            device = None
+            go_offline()
+            time.sleep(RECONNECT_DELAY)
+            continue
+
+        if isinstance(data, dict) and "dps" in data:
+            publish_dps(data["dps"])
+            publish_alive()
+
+        now = time.monotonic()
+
+        # Keepalive to hold the socket open.
+        if now - last_heartbeat > HEARTBEAT_SECONDS:
+            try:
+                device.heartbeat()
+            except Exception as e:
+                log("Tuya heartbeat ERROR:", repr(e))
+                device = None
+                go_offline()
+                time.sleep(RECONNECT_DELAY)
+                continue
+            last_heartbeat = now
+
+        # Safety poll: re-read the full status in case a push was missed.
+        if now - last_poll > SAFETY_POLL_SECONDS:
+            try:
+                status = device.status()
+                if isinstance(status, dict) and "dps" in status:
+                    publish_dps(status["dps"])
+                    publish_alive()
+            except Exception as e:
+                log("Tuya poll ERROR:", repr(e))
+                device = None
+                go_offline()
+                time.sleep(RECONNECT_DELAY)
+                continue
+            last_poll = now
+
+
+# --- Main ---
 
 client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 client.on_message = on_message
 
-log("Starting Fakro bridge...")
+log("Starting Fakro bridge (persistent/push)...")
 
 client.connect(MQTT_HOST, MQTT_PORT, 60)
 client.loop_start()
 
 try:
-    while True:
-
-        with lock:
-
-            if fast_poll_counter > 0:
-                fast_poll_counter -= 1
-                interval = POLL_AFTER_COMMAND_SECONDS
-
-            else:
-                interval = POLL_IDLE_SECONDS
-
-        refresh()
-
-        wake_event.wait(interval)
-        wake_event.clear()
-
+    tuya_loop()
 except KeyboardInterrupt:
-
     log("Stopping bridge...")
-
-    pub("availability", "offline")
-
+    go_offline()
     client.loop_stop()
     client.disconnect()
