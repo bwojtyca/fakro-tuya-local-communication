@@ -32,6 +32,7 @@ from fakro_config import (
     MQTT_PASS,
     BASE_TOPIC,
 )
+from discovery.ha_discovery import publish_discovery
 
 POLL_IDLE_SECONDS = 60
 POLL_AFTER_COMMAND_SECONDS = 3
@@ -59,6 +60,7 @@ previous_position = None
 last_move_command = None   # {"direction": "opening"|"closing", "ts": float}
 last_cover_state = None
 was_online = False          # tracks availability transitions (for last_seen)
+discovery_published = False # publish HA discovery once per process
 
 
 def log(*args):
@@ -301,12 +303,24 @@ def set_dp(dp, value, label):
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
+    global discovery_published
+
     log("MQTT connected:", reason_code)
 
     client.subscribe(f"{BASE_TOPIC}/set", qos=QOS)
     client.subscribe(f"{BASE_TOPIC}/position/set", qos=QOS)
     client.subscribe(f"{BASE_TOPIC}/speed/set", qos=QOS)
     client.subscribe(f"{BASE_TOPIC}/rain_use/set", qos=QOS)
+
+    # Publish HA discovery once, so entities always match the running code.
+    # Wrapped so a discovery error can never take the bridge down.
+    if not discovery_published:
+        try:
+            publish_discovery(client)
+            discovery_published = True
+            log("MQTT discovery published")
+        except Exception as e:
+            log("Discovery publish failed:", repr(e))
 
     pub("availability", "online")
 

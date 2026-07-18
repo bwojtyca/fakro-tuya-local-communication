@@ -76,8 +76,12 @@ the container: `/opt/fakro-bridge`, Python environment: `/opt/tuya-env`.
 
 ```bash
 ./deploy/deploy.sh              # deploy + restart the service
-./deploy/deploy.sh --discovery  # also publish the entities to Home Assistant
+./deploy/deploy.sh --discovery  # force a one-off discovery republish (optional)
 ```
+
+The bridge publishes MQTT Discovery automatically on every (re)connect, so the
+entities always match the running code — `--discovery` is only needed to force a
+republish without restarting.
 
 Deploy parameters (container host, directories) are read from the `.env` file
 (`FAKRO_DEPLOY_HOST`, `FAKRO_DEPLOY_DIR`, `FAKRO_VENV_DIR`) and can be overridden

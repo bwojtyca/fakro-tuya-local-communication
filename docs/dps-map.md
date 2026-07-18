@@ -18,7 +18,7 @@ The "MQTT topic" column is relative to the `fakro/window` base
 | DP  | MQTT topic     | Description |
 |-----|----------------|-------------|
 | 140 | `rain_state`   | Rain detected (bool) |
-| 106 | `motor`        | Motor state |
+| 106 | `motor`        | Motor state — multi-valued: `0` = stopped, `1`/`2` = running (observed `1` while moving, `2` transiently on stop). Any non-zero is treated as "moving". |
 | 111 | `noposition`   | No position / calibrating |
 | 120 | `errors`       | Error code |
 | 181 | `current`      | Current draw (raw value) |
