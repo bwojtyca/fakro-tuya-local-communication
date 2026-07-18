@@ -3,7 +3,7 @@
 # Deploy mostu Fakro-Tuya z Maca do kontenera LXC na Proxmoxie.
 #
 # Co robi:
-#   1. Wysyła kod (rsync po SSH) do katalogu aplikacji na kontenerze.
+#   1. Wysyła kod (tar po SSH) do katalogu aplikacji na kontenerze.
 #   2. Wgrywa lokalny plik .env (sekrety) — osobno, bez trzymania go w repo.
 #   3. Zapewnia środowisko Python (venv) i instaluje zależności.
 #   4. Instaluje/aktualizuje jednostki systemd i restartuje usługę.
@@ -44,8 +44,10 @@ if [[ ! -f "$REPO_DIR/.env" ]]; then
 fi
 
 # 1. Wyślij kod (bez .git, cache, logów i .env — .env leci osobno w kroku 2)
-echo "==> [1/5] Synchronizacja kodu (rsync)..."
-rsync -az --human-readable \
+#    Używamy tar po SSH zamiast rsync, bo minimalny kontener LXC nie ma rsync.
+echo "==> [1/5] Synchronizacja kodu (tar po SSH)..."
+ssh "$DEPLOY_HOST" "mkdir -p ${APP_DIR}"
+tar -cz \
     --exclude '.git' \
     --exclude '__pycache__' \
     --exclude '*.pyc' \
@@ -53,7 +55,8 @@ rsync -az --human-readable \
     --exclude '*.log.*' \
     --exclude '.env' \
     --exclude '.DS_Store' \
-    "$REPO_DIR/" "${DEPLOY_HOST}:${APP_DIR}/"
+    -C "$REPO_DIR" . \
+    | ssh "$DEPLOY_HOST" "tar -xz -C ${APP_DIR}"
 
 # 2. Wgraj sekrety (.env) z bezpiecznymi uprawnieniami
 echo "==> [2/5] Wgrywanie .env..."
@@ -76,6 +79,7 @@ EOF
 echo "==> [4/5] Instalacja jednostek systemd..."
 ssh "$DEPLOY_HOST" "bash -s" <<EOF
 set -e
+mkdir -p ${APP_DIR}/logs
 cp ${APP_DIR}/deploy/systemd/fakro-bridge.service      /etc/systemd/system/
 cp ${APP_DIR}/deploy/systemd/fakro-healthcheck.service /etc/systemd/system/
 cp ${APP_DIR}/deploy/systemd/fakro-healthcheck.timer   /etc/systemd/system/

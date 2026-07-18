@@ -12,8 +12,9 @@ ExecStart=/opt/tuya-env/bin/python /opt/fakro-bridge/src/fakro_bridge.py
 Restart=always
 RestartSec=5
 TimeoutStopSec=10
-StandardOutput=journal
-StandardError=journal
+# Katalog logs/ jest tworzony przez deploy.sh przed startem usługi.
+StandardOutput=append:/opt/fakro-bridge/logs/fakro_bridge.log
+StandardError=append:/opt/fakro-bridge/logs/fakro_bridge.log
 
 [Install]
 WantedBy=multi-user.target
