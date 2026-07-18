@@ -79,12 +79,12 @@ konfiguruje systemd i restartuje usługę. Docelowa lokalizacja na kontenerze:
 ./deploy/deploy.sh --discovery  # dodatkowo opublikuj encje do Home Assistanta
 ```
 
-Parametry można nadpisać zmiennymi środowiskowymi:
+Parametry deployu (host kontenera, katalogi) czytane są z pliku `.env`
+(klucze `FAKRO_DEPLOY_HOST`, `FAKRO_DEPLOY_DIR`, `FAKRO_VENV_DIR`) i można je
+doraźnie nadpisać zmienną środowiskową:
 
 ```bash
-FAKRO_DEPLOY_HOST=root@192.168.20.245 \
-FAKRO_DEPLOY_DIR=/opt/fakro-bridge \
-./deploy/deploy.sh
+FAKRO_DEPLOY_HOST=root@192.168.x.x ./deploy/deploy.sh
 ```
 
 ### Przydatne komendy na kontenerze

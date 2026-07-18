@@ -8,8 +8,9 @@
 #   3. Zapewnia środowisko Python (venv) i instaluje zależności.
 #   4. Instaluje/aktualizuje jednostki systemd i restartuje usługę.
 #
-# Konfiguracja przez zmienne środowiskowe (wartości domyślne poniżej):
-#   FAKRO_DEPLOY_HOST   host SSH kontenera            (root@192.168.20.245)
+# Konfiguracja pochodzi z pliku .env (klucze FAKRO_DEPLOY_*), a można ją nadpisać
+# zmiennymi środowiskowymi o tych samych nazwach:
+#   FAKRO_DEPLOY_HOST   host SSH kontenera              (np. root@192.168.x.x)
 #   FAKRO_DEPLOY_DIR    katalog aplikacji na kontenerze (/opt/fakro-bridge)
 #   FAKRO_VENV_DIR      katalog wirtualnego środowiska  (/opt/tuya-env)
 #
@@ -19,13 +20,29 @@
 
 set -euo pipefail
 
-DEPLOY_HOST="${FAKRO_DEPLOY_HOST:-root@192.168.20.245}"
-APP_DIR="${FAKRO_DEPLOY_DIR:-/opt/fakro-bridge}"
-VENV_DIR="${FAKRO_VENV_DIR:-/opt/tuya-env}"
-
 # Katalog główny repo (o poziom wyżej niż ten skrypt)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
+
+# Odczyt pojedynczego klucza z .env BEZ sourcowania pliku.
+# (nie używamy `. .env`, bo wartości takie jak LOCAL_KEY zawierają znaki
+#  specjalne — backtick itp. — które wywracają parser basha)
+read_env() {
+    [ -f "$REPO_DIR/.env" ] || return 0
+    grep -E "^$1=" "$REPO_DIR/.env" | tail -n1 | cut -d= -f2- | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+}
+
+# Priorytet: zmienna środowiskowa > wartość z .env > wartość domyślna
+DEPLOY_HOST="${FAKRO_DEPLOY_HOST:-$(read_env FAKRO_DEPLOY_HOST)}"
+APP_DIR="${FAKRO_DEPLOY_DIR:-$(read_env FAKRO_DEPLOY_DIR)}"
+VENV_DIR="${FAKRO_VENV_DIR:-$(read_env FAKRO_VENV_DIR)}"
+APP_DIR="${APP_DIR:-/opt/fakro-bridge}"
+VENV_DIR="${VENV_DIR:-/opt/tuya-env}"
+
+if [[ -z "$DEPLOY_HOST" ]]; then
+    echo "BŁĄD: brak FAKRO_DEPLOY_HOST (ustaw w .env lub w środowisku)." >&2
+    exit 1
+fi
 
 RUN_DISCOVERY=false
 if [[ "${1:-}" == "--discovery" ]]; then
